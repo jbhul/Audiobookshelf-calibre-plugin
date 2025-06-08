@@ -200,21 +200,28 @@ class AudiobookshelfAction(InterfaceAction):
                         'author': metadata.get('authorName', ''),
                         'library': item.get('libraryName', ''),
                     })
+        # Check if there are unlinked items   
+        if not unlinked_items:
+            # Show a dialog indicating there are no unlinked audiobooks
+            message = "There are no Unlinked Audiobooks in your Library."
+            dialog = SyncCompletionDialog(self.gui, "Unlinked Audiobookshelf Books", message, [], resultsColWidth=0, type="info")
+            dialog.show()
+            
+        else:
+            # Sort by title
+            unlinked_items.sort(key=lambda x: x['title'].lower())
 
-        # Sort by title
-        unlinked_items.sort(key=lambda x: x['title'].lower())
-
-        # Show results
-        message = (f"Found {len(unlinked_items)} unlinked books in Audiobookshelf library.\n\n"
-        "Double Click the title to open book in Audiobookshelf.")
-        dialog = SyncCompletionDialog(self.gui, "Unlinked Audiobookshelf Books", message, unlinked_items, resultsColWidth=0, type="info")
-        table = dialog.table_area.findChild(QTableWidget)
-        def on_cell_double_clicked(row, col):
-            print(table.get_column_index("title"))
-            if col == 1:
-                open_url(f"{CONFIG['abs_url']}/audiobookshelf/item/{unlinked_items[table.item(row, 0).text()].get('hidden_id')}")
-        table.cellDoubleClicked.connect(on_cell_double_clicked)
-        dialog.show()
+            # Show results
+            message = (f"Found {len(unlinked_items)} unlinked books in Audiobookshelf library.\n\n"
+            "Double Click the title to open book in Audiobookshelf.")
+            dialog = SyncCompletionDialog(self.gui, "Unlinked Audiobookshelf Books", message, unlinked_items, resultsColWidth=0, type="info")
+            table = dialog.table_area.findChild(QTableWidget)
+            def on_cell_double_clicked(row, col):
+                print(table.get_column_index("title"))
+                if col == 1:
+                    open_url(f"{CONFIG['abs_url']}/audiobookshelf/item/{unlinked_items[table.item(row, 0).text()].get('hidden_id')}")
+            table.cellDoubleClicked.connect(on_cell_double_clicked)
+            dialog.show()
 
     def scheduled_sync(self):
         def scheduledTask():
