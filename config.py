@@ -329,7 +329,7 @@ CUSTOM_COLUMN_DEFAULTS = {
         'config_tool_tip': _('A "Float" column to store the precise reading progress with decimal places.'),
         'api_source': "mediaProgress",
         'data_location': ['progress'],
-        'transform': (lambda value: float(value) * 100),
+        'transform': (lambda value: round(float(value) * 100, 2)),
     },
     'column_audiobook_progress_int': {
         'column_heading': _("Audiobook Progress"),

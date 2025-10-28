@@ -30,7 +30,7 @@ class AudiobookshelfSync(InterfaceActionBase):
     name = 'Audiobookshelf Sync'
     description = 'Get metadata from a connected Audiobookshelf instance'
     author = 'jbhul'
-    version = (1, 5, 1)
+    version = (1, 5, 2)
     minimum_calibre_version = (5, 0, 1)  # Because Python 3
     config = JSONConfig(os.path.join('plugins', 'Audiobookshelf Sync.json'))
     actual_plugin = 'calibre_plugins.audiobookshelf.action:AudiobookshelfAction'
