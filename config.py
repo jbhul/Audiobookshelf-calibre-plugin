@@ -133,7 +133,7 @@ CUSTOM_COLUMN_DEFAULTS = {
         'config_tool_tip': _('A "series" column to store the series from the audiobook metadata.'),
         'api_source': "lib_items",
         'data_location': ['media', 'metadata', 'seriesName'],
-        'transform': (lambda value: None if not value else (value.split(" #")[0].strip(), float(value.split(" #")[1].split(",")[0]) if len(value.split(" #")) > 1 else float(1))),
+        'transform': ('transform': (lambda value: None if not value else (value.split(" #")[0].strip(), float(value.split(" #")[1].split(",")[0]) if len(value.split(" #")) > 1 and value.split(" #")[1].split(",")[0].replace('.', '', 1).isdigit() else None))),
     },
     'column_audiobook_language': {
         'column_heading': _("Audiobook Language"),
