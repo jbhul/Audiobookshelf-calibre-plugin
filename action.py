@@ -1450,10 +1450,15 @@ class LinkDialog(QDialog):
 
         # Get calibre book details for comparison
         calibre_title = self.calibre_metadata.get('title', '').lower() if self.calibre_metadata else ''
+        calibre_title_left_colon = calibre_title.split(':', 1)[0].strip() if ':' in calibre_title else ''
         calibre_authors = self.calibre_metadata.get('authors', []) if self.calibre_metadata else []
         if isinstance(calibre_authors, str):
             calibre_authors = [calibre_authors]
         calibre_authors = [author.lower() for author in calibre_authors]
+
+        def authors_match(abs_author):
+            abs_author_list = [author.strip() for author in abs_author.split(',') if author.strip()]
+            return any(author in calibre_authors for author in abs_author_list)
 
         # Sort items - matched items first, then alphabetically by title
         def sort_key(item):
@@ -1461,11 +1466,13 @@ class LinkDialog(QDialog):
             abs_title = metadata.get('title', '').lower()
             abs_author = metadata.get('authorName', '').lower()
 
-            # Calculate match score: 2 for title+author match, 1 for either match, 0 for no match
+            # Calculate match score: +3 exact title, +2 loose title, +1 author match
             score = 0
             if abs_title == calibre_title:
-                score += 1
-            if abs_author in calibre_authors:
+                score += 3
+            elif calibre_title_left_colon and abs_title == calibre_title_left_colon:
+                score += 2
+            if authors_match(abs_author):
                 score += 1
             if linked_book_id is not None and abs_title == linked_book_title.lower():
                 score += 5  # Boost score for already linked book
@@ -1492,7 +1499,8 @@ class LinkDialog(QDialog):
             # Create title item
             title_item = QTableWidgetItem(abs_title)
             title_item.setFlags(title_item.flags() & ~Qt.ItemIsEditable)
-            if abs_title.lower() == calibre_title:
+            abs_title_lower = abs_title.lower()
+            if abs_title_lower == calibre_title or (calibre_title_left_colon and abs_title_lower == calibre_title_left_colon):
                 title_item.setBackground(highlight_color)
                 title_item.setForeground(QColor(0, 0, 0))  # Force black text
             self.table.setItem(row, 0, title_item)
@@ -1500,7 +1508,7 @@ class LinkDialog(QDialog):
             # Create author item  
             author_item = QTableWidgetItem(abs_author)
             author_item.setFlags(author_item.flags() & ~Qt.ItemIsEditable)
-            if abs_author.lower() in calibre_authors:
+            if authors_match(abs_author.lower()):
                 author_item.setBackground(highlight_color)
                 author_item.setForeground(QColor(0, 0, 0))  # Force black text
             self.table.setItem(row, 1, author_item)
