@@ -34,6 +34,7 @@ the **create new columns** option in the config dropdowns.
 2. Click "Add Audiobookshelf Account" and enter your Audiobookshelf server details:
    - Server URL (default: <http://localhost:13378>)
    - [API Key](https://www.audiobookshelf.org/guides/api-keys/)
+   - Click "Load Libraries" after entering the API key to select audiobook libraries to filter out of manual linking, Quick Link, and the "Not in Calibre" view. Leave all libraries unchecked to include every audiobook library; at least one library must remain unchecked.
    - Optionally set up scheduled sync
 3. Configure columns and other settings
 4. Link Books and Sync
@@ -121,6 +122,8 @@ Enable scheduled sync in the plugin configuration to automatically sync metadata
 2. Right-click the Audiobookshelf icon and select "Link Audiobookshelf Book"
 3. Select the matching book from your Audiobookshelf library
    Matched titles/authors will be highlighted and shown at the top for easier identification, a reading progress indicator will show which books you've started.
+
+Library filters configured in Audiobookshelf Account Settings are applied to manual linking, Quick Link, and the "Not in Calibre" view. Other Audiobookshelf libraries remain available for metadata synchronization and other features.
 
 #### Quick Link Books
 

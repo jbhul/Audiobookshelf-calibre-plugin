@@ -187,10 +187,18 @@ class AudiobookshelfAction(InterfaceAction):
         return about_dialog.exec_()
 
     def show_not_in_calibre(self):
-        abs_items = self.get_abs_library_items()
+        abs_items = self.get_abs_library_items(apply_library_filter=True)
         if abs_items is None:
             show_error(self.gui, "API Error", "Failed to retrieve Audiobookshelf library data, "
             "does user have library permissions or is Audiobookshelf empty?")
+            return
+        if not abs_items:
+            show_info(
+                self.gui,
+                "No Libraries Available",
+                "The selected Audiobookshelf library filters exclude all available audiobook libraries. "
+                "Clear or adjust the filters in Audiobookshelf Account Settings."
+            )
             return
 
         # Get all linked ABS IDs from Calibre
@@ -928,9 +936,17 @@ class AudiobookshelfAction(InterfaceAction):
                 dialog.show()
                 return
 
-        abs_items = self.get_abs_library_items()
+        abs_items = self.get_abs_library_items(apply_library_filter=True)
         if abs_items is None:
             show_error(self.gui, "API Error", "Failed to retrieve Audiobookshelf library data, does user have library permissions or is Audiobookshelf empty?")
+            return
+        if not abs_items:
+            show_info(
+                self.gui,
+                "No Libraries Available for Linking",
+                "The selected Audiobookshelf library filters exclude all available audiobook libraries. "
+                "Clear or adjust the filters in Audiobookshelf Account Settings."
+            )
             return
 
         # key of ASIN and value of list of dict with keys abs_id and abs_title
@@ -1059,10 +1075,18 @@ class AudiobookshelfAction(InterfaceAction):
         self.quickLinkWorker.start()
 
     def link_audiobookshelf_book(self):
-        abs_items = self.get_abs_library_items()
+        abs_items = self.get_abs_library_items(apply_library_filter=True)
         if abs_items is None:
             show_error(self.gui, "API Error", "Failed to retrieve Audiobookshelf library data, "
             "does user have library permissions or is Audiobookshelf empty?")
+            return
+        if not abs_items:
+            show_info(
+                self.gui,
+                "No Libraries Available for Linking",
+                "The selected Audiobookshelf library filters exclude all available audiobook libraries. "
+                "Clear or adjust the filters in Audiobookshelf Account Settings."
+            )
             return
 
         # Get me data
@@ -1151,10 +1175,17 @@ class AudiobookshelfAction(InterfaceAction):
                              f"{len(selected_ids)} {'book has' if len(selected_ids) == 1 else 'books have'} been unlinked from Audiobookshelf.", 
                              log, resultsColWidth=0, type="info").exec_()
 
-    def get_abs_library_items(self):
-        """Get all items from all Audiobookshelf libraries."""
+    def get_abs_library_items(self, apply_library_filter=False):
+        """Get items from Audiobookshelf libraries, optionally applying configured filters."""
         server_url = CONFIG.get('abs_url', 'http://localhost:13378')
         api_key = CONFIG.get('abs_key', '')
+        configured_filtered_ids = CONFIG.get('abs_filtered_libraries', [])
+        if not isinstance(configured_filtered_ids, (list, tuple, set)):
+            configured_filtered_ids = []
+        filtered_library_ids = {
+            str(library_id)
+            for library_id in configured_filtered_ids
+        } if apply_library_filter else set()
         
         if not api_key:
             show_error(self.gui, "Configuration Error", "API Key not set in configuration.")
@@ -1178,8 +1209,10 @@ class AudiobookshelfAction(InterfaceAction):
             library_name = library.get('name')
             if not library_id:
                 continue
+            if str(library_id) in filtered_library_ids:
+                continue
             if library.get('mediaType') != 'book':
-                continue  # Skip non-audiobook libraries
+                continue  # Skip non-book libraries (like podcasts)
                 
             items_url = f"{server_url}/api/libraries/{library_id}/items"
             items_data = self.api_request(items_url, api_key)
@@ -1192,7 +1225,12 @@ class AudiobookshelfAction(InterfaceAction):
                 
             all_items.extend(items_list)
         
-        return all_items if all_items else None
+        if all_items:
+            return all_items
+        # An empty result is valid when the configured filter excludes every
+        # audiobook library. Preserve the existing None-as-error behavior for
+        # unfiltered callers.
+        return [] if filtered_library_ids else None
 
     def get_abs_collections(self, server_url, api_key):
         collections_dict = {}

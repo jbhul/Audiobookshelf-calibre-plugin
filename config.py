@@ -21,6 +21,8 @@ from PyQt5.Qt import (
     QSpinBox,
     QFrame,
     QDialog,
+    QListWidget,
+    QListWidgetItem,
     QSizePolicy,
     Qt,
 )
@@ -133,7 +135,7 @@ CUSTOM_COLUMN_DEFAULTS = {
         'config_tool_tip': _('A "series" column to store the series from the audiobook metadata.'),
         'api_source': "lib_items",
         'data_location': ['media', 'metadata', 'seriesName'],
-        'transform': ('transform': (lambda value: None if not value else (value.split(" #")[0].strip(), float(value.split(" #")[1].split(",")[0]) if len(value.split(" #")) > 1 and value.split(" #")[1].split(",")[0].replace('.', '', 1).isdigit() else None))),
+        'transform': (lambda value: None if not value else (value.split(" #")[0].strip(), float(value.split(" #")[1].split(",")[0]) if len(value.split(" #")) > 1 and value.split(" #")[1].split(",")[0].replace('.', '', 1).isdigit() else None)),
     },
     'column_audiobook_language': {
         'column_heading': _("Audiobook Language"),
@@ -656,6 +658,7 @@ CONFIG = JSONConfig(os.path.join('plugins', 'Audiobookshelf Sync.json'))
 # Set specific defaults
 CONFIG.defaults['abs_url'] = 'http://localhost:13378'
 CONFIG.defaults['abs_key'] = ''
+CONFIG.defaults['abs_filtered_libraries'] = []
 CONFIG.defaults['scheduleSyncHour'] = 4
 CONFIG.defaults['scheduleSyncMinute'] = 0
 CONFIG.defaults['audibleRegion'] = '.com'
@@ -1020,8 +1023,8 @@ except ImportError:
 class ABSAccountPopup(QDialog):
     def __init__(self, parent):
         QDialog.__init__(self, parent)
-        self.setWindowTitle('Add Audiobookshelf Account')
-        self.resize(400, 100) # 400 width, small height to constrain
+        self.setWindowTitle('Audiobookshelf Account Settings')
+        self.resize(450, 500)
 
         layout = QVBoxLayout()
         self.setLayout(layout)
@@ -1052,21 +1055,69 @@ class ABSAccountPopup(QDialog):
         layout.addWidget(self.key_label)
         layout.addWidget(self.key_input)
 
+        layout.addWidget(create_separator())
+        library_filter_label = QLabel('<b>Filter Libraries</b>', self)
+        layout.addWidget(library_filter_label)
+        library_filter_note = QLabel(
+            'Select audiobook libraries to filter out of manual linking, Quick Link, and the '
+            '"Not in Calibre" view. '
+            'Leave all libraries unchecked to include them all.',
+            self
+        )
+        library_filter_note.setWordWrap(True)
+        layout.addWidget(library_filter_note)
+
+        library_filter_controls = QHBoxLayout()
+        self.load_libraries_button = QPushButton('Load Libraries', self)
+        self.load_libraries_button.clicked.connect(self.load_audiobookshelf_libraries)
+        library_filter_controls.addWidget(self.load_libraries_button)
+        self.clear_library_filter_button = QPushButton('Clear Selection', self)
+        self.clear_library_filter_button.clicked.connect(self.clear_library_filter)
+        self.clear_library_filter_button.setEnabled(False)
+        library_filter_controls.addWidget(self.clear_library_filter_button)
+        library_filter_controls.addStretch()
+        layout.addLayout(library_filter_controls)
+
+        self.library_list = QListWidget(self)
+        self.library_list.setMinimumHeight(140)
+        self.library_list.setEnabled(False)
+        layout.addWidget(self.library_list)
+        self.library_filter_status = QLabel(
+            'Click Load Libraries after entering a valid API key to choose filters.',
+            self
+        )
+        self.library_filter_status.setWordWrap(True)
+        layout.addWidget(self.library_filter_status)
+
         self.validate_credentials_button = QPushButton('Validate Account', self)
         self.validate_credentials_button.clicked.connect(self.validate_audiobookshelf_credentials)
         layout.addWidget(self.validate_credentials_button)
-        self.isValidated = False
 
         self.login_button = QPushButton('Validate + Save Account', self)
         self.login_button.clicked.connect(self.save_audiobookshelf_account_settings)
         layout.addWidget(self.login_button)
 
+        self.isValidated = False
+        self.libraries_loaded = False
+        self.loaded_library_credentials = None
+        self.url_input.textChanged.connect(self.credentials_changed)
+        self.key_input.textChanged.connect(self.credentials_changed)
+
     def validate_audiobookshelf_credentials(self):
         from urllib.request import Request, urlopen
         from urllib.error import URLError, HTTPError
 
-        self.currURL = self.url_input.text()
-        self.currKey = self.key_input.toPlainText()
+        self.currURL, self.currKey = self.get_current_credentials()
+
+        if not self.currKey:
+            error_dialog(
+                self.parent().action.gui,
+                'API Key Required',
+                'Enter an Audiobookshelf API key before validating the account or loading libraries.',
+                show=True,
+                show_copy_button=False
+            )
+            return False
 
         def api_request(url, api_key, post=False):
             req = Request(url, headers={
@@ -1091,11 +1142,11 @@ class ABSAccountPopup(QDialog):
                 except Exception:
                     error_json = None
                 return (code, error_json)
-            except URLError as e:
+            except (URLError, ValueError):
                 return None, None
 
         resp_code, res= api_request(f'{self.currURL}/ping', self.currKey)
-        if resp_code != 200 or res['success'] != True:
+        if resp_code != 200 or not isinstance(res, dict) or res.get('success') is not True:
             error_dialog(
                 self.parent().action.gui,
                 'Server Not Accessible',
@@ -1106,7 +1157,7 @@ class ABSAccountPopup(QDialog):
             return False
 
         resp_code, res= api_request(f'{self.currURL}/api/authorize', self.currKey, True)
-        if resp_code != 200:
+        if resp_code != 200 or not isinstance(res, dict):
             error_dialog(
                 self.parent().action.gui,
                 'API Key Not Valid',
@@ -1116,31 +1167,262 @@ class ABSAccountPopup(QDialog):
             )
             return False
         else:
+            user = res.get('user', {})
+            if not isinstance(user, dict):
+                user = {}
+            permissions = user.get('permissions', {})
+            if not isinstance(permissions, dict):
+                permissions = {}
             info_dialog(
                 self.parent().action.gui,
                 'API Key Valid',
                 'URL and API Key are valid!\nSee below for details.',
                 det_msg=json.dumps({
-                    'username': res['user']['username'],
-                    'isActive': res['user']['isActive'],
-                    'type': res['user']['type'],
-                    'canWriteback': res['user']['permissions'].get('update', False),
-                    'permissions': res['user']['permissions'],
-                    'libraries (if accessAllLibraries is not True)': res['user']['librariesAccessible'],
+                    'username': user.get('username'),
+                    'isActive': user.get('isActive'),
+                    'type': user.get('type'),
+                    'canWriteback': permissions.get('update', False),
+                    'permissions': permissions,
+                    'libraries (if accessAllLibraries is not True)': user.get('librariesAccessible'),
                 }, indent=4),
                 show=True,
                 show_copy_button=True
             )
             self.isValidated = True
+            self.load_audiobookshelf_libraries()
             return True
 
+    def get_current_credentials(self):
+        return (
+            self.url_input.text().strip().rstrip('/'),
+            self.key_input.toPlainText().strip(),
+        )
+
+    def credentials_changed(self, *_):
+        self.isValidated = False
+        self.libraries_loaded = False
+        self.loaded_library_credentials = None
+        self.library_list.clear()
+        self.library_list.setEnabled(False)
+        self.clear_library_filter_button.setEnabled(False)
+        self.library_filter_status.setText(
+            'Click Load Libraries after entering a valid API key to choose filters.'
+        )
+
+    def get_checked_library_ids(self):
+        return {
+            str(self.library_list.item(index).data(Qt.UserRole))
+            for index in range(self.library_list.count())
+            if self.library_list.item(index).checkState() == Qt.Checked
+        }
+
+    def clear_library_filter(self):
+        for index in range(self.library_list.count()):
+            self.library_list.item(index).setCheckState(Qt.Unchecked)
+
+    def library_filter_has_included_library(self):
+        return (
+            not self.libraries_loaded
+            or not self.library_list.count()
+            or any(
+                self.library_list.item(index).checkState() != Qt.Checked
+                for index in range(self.library_list.count())
+            )
+        )
+
+    def show_invalid_library_filter_error(self):
+        error_dialog(
+            self.parent().action.gui,
+            'At Least One Library Must Remain Included',
+            'At least one audiobook library must remain unchecked so that linking has a library to search. '
+            'Clear one or more selections and try again.',
+            show=True,
+            show_copy_button=False
+        )
+
+    def load_audiobookshelf_libraries(self):
+        from urllib.request import Request, urlopen
+        from urllib.error import URLError, HTTPError
+
+        server_url, api_key = self.get_current_credentials()
+        if not api_key:
+            error_dialog(
+                self.parent().action.gui,
+                'API Key Required',
+                'Enter a valid Audiobookshelf API key before loading libraries.',
+                show=True,
+                show_copy_button=False
+            )
+            return False
+
+        current_credentials = (server_url, api_key)
+
+        req = Request(
+            f'{server_url}/api/libraries',
+            headers={
+                'Authorization': f'Bearer {api_key}',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'CalibreAudiobookshelfSync/',
+            }
+        )
+        try:
+            with urlopen(req, timeout=4) as response:
+                response_code = response.getcode()
+                response_data = json.loads(response.read().decode('utf-8'))
+        except HTTPError as error:
+            response_code = error.getcode()
+            response_data = None
+        except (URLError, ValueError):
+            response_code = None
+            response_data = None
+
+        if response_code != 200:
+            if response_code in (401, 403):
+                message = (
+                    'Audiobookshelf rejected the API key while loading libraries. '
+                    'Check that the key is valid and that the account can access libraries.'
+                )
+            elif response_code is None:
+                message = (
+                    'The library request failed. Check that the server URL is reachable '
+                    'and that Audiobookshelf is running.'
+                )
+            else:
+                message = f'Audiobookshelf returned HTTP {response_code} while loading libraries.'
+            error_dialog(
+                self.parent().action.gui,
+                'Unable to Load Libraries',
+                message,
+                show=True,
+                show_copy_button=False
+            )
+            return False
+
+        if isinstance(response_data, dict):
+            libraries_data = response_data.get('libraries', [])
+        elif isinstance(response_data, list):
+            libraries_data = response_data
+        else:
+            libraries_data = []
+
+        if not isinstance(libraries_data, list):
+            error_dialog(
+                self.parent().action.gui,
+                'Unable to Load Libraries',
+                'Audiobookshelf returned an unexpected response while loading libraries.',
+                show=True,
+                show_copy_button=False
+            )
+            return False
+
+        stored_filtered_ids = CONFIG.get('abs_filtered_libraries', [])
+        if not isinstance(stored_filtered_ids, (list, tuple, set)):
+            stored_filtered_ids = []
+        selected_ids = (
+            self.get_checked_library_ids()
+            if self.libraries_loaded
+            else {str(library_id) for library_id in stored_filtered_ids}
+        )
+        self.library_list.clear()
+        valid_libraries = [
+            library for library in libraries_data
+            if isinstance(library, dict)
+            and library.get('id')
+            and library.get('mediaType') == 'book'
+        ]
+        library_counts_unavailable = False
+        for library in sorted(valid_libraries, key=lambda value: str(value.get('name') or value['id']).lower()):
+            library_id = str(library['id'])
+            library_name = library.get('name') or library_id
+            book_count = library.get('numBooks')
+            try:
+                book_count = int(book_count)
+            except (TypeError, ValueError):
+                book_count = self.get_library_book_count(server_url, api_key, library_id)
+            if book_count is None:
+                library_counts_unavailable = True
+            else:
+                book_label = 'Book' if book_count == 1 else 'Books'
+                library_name = f'{library_name} ({book_count:,} {book_label})'
+            item = QListWidgetItem(library_name, self.library_list)
+            item.setData(Qt.UserRole, library_id)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if library_id in selected_ids else Qt.Unchecked)
+
+        self.currURL = server_url
+        self.currKey = api_key
+        self.libraries_loaded = True
+        self.loaded_library_credentials = current_credentials
+        self.library_list.setEnabled(True)
+        self.clear_library_filter_button.setEnabled(self.library_list.count() > 0)
+        if self.library_list.count():
+            status = (
+                f'Loaded {self.library_list.count()} audiobook libraries. '
+                'Checked libraries will be filtered out of manual linking, Quick Link, and the '
+                '"Not in Calibre" view.'
+            )
+            if library_counts_unavailable:
+                status += ' Book counts were unavailable for one or more libraries.'
+            self.library_filter_status.setText(status)
+        else:
+            self.library_filter_status.setText(
+                'No audiobook libraries were returned for this account. Check that the API key has library access.'
+            )
+            info_dialog(
+                self.parent().action.gui,
+                'No Libraries Found',
+                'No audiobook libraries were returned for this account. Check the API key permissions.',
+                show=True,
+                show_copy_button=False
+            )
+        return True
+
+    def get_library_book_count(self, server_url, api_key, library_id):
+        from urllib.request import Request, urlopen
+        from urllib.error import URLError, HTTPError
+
+        req = Request(
+            f'{server_url}/api/libraries/{library_id}/items?limit=1&minified=1',
+            headers={
+                'Authorization': f'Bearer {api_key}',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'CalibreAudiobookshelfSync/',
+            }
+        )
+        try:
+            with urlopen(req, timeout=4) as response:
+                if response.getcode() != 200:
+                    return None
+                response_data = json.loads(response.read().decode('utf-8'))
+        except (HTTPError, URLError, ValueError):
+            return None
+
+        if not isinstance(response_data, dict):
+            return None
+        try:
+            return int(response_data['total'])
+        except (KeyError, TypeError, ValueError):
+            return None
+
     def save_audiobookshelf_account_settings(self):
-        if not (self.isValidated and self.currURL == self.url_input.text() and self.currKey == self.key_input.toPlainText()):
+        if not self.library_filter_has_included_library():
+            self.show_invalid_library_filter_error()
+            return
+
+        current_credentials = self.get_current_credentials()
+        if not (self.isValidated and (self.currURL, self.currKey) == current_credentials):
             if not self.validate_audiobookshelf_credentials():
                 return
+        if not self.library_filter_has_included_library():
+            self.show_invalid_library_filter_error()
+            return
 
         CONFIG['abs_url'] = self.currURL
         CONFIG['abs_key'] = self.currKey
+        if self.libraries_loaded and self.loaded_library_credentials == current_credentials:
+            CONFIG['abs_filtered_libraries'] = sorted(self.get_checked_library_ids())
 
         try:
             from calibre.ebooks.metadata.sources.prefs import msprefs
